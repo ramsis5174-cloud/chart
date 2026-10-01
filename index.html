@@ -76,7 +76,6 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px 
 .dempty{padding:20px 16px;color:var(--mute)}
 .wcols,.wr{display:grid;grid-template-columns:1.9fr 1.1fr .85fr .8fr;gap:4px;padding:0 12px 0 20px;align-items:center}
 .wr .fl{position:absolute;left:0;top:50%;transform:translateY(-50%);width:12px;height:20px;clip-path:polygon(0 0,100% 0,60% 50%,100% 100%,0 100%);background:transparent;cursor:pointer}
-.wr:hover .fl{background:#4a4e59}
 .wr .fl.set{background:var(--fc)}
 #ctx{position:fixed;z-index:20;background:var(--panel);border:1px solid var(--line);border-radius:6px;box-shadow:0 8px 30px rgba(0,0,0,.5);padding:6px 0;min-width:280px;font-size:13px}
 #ctx[hidden]{display:none}
@@ -95,13 +94,14 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px 
 .wcols span:not(:first-child),.wr span:not(:first-child){text-align:right}
 #wRows{flex:1;overflow-y:auto}
 .wr{padding-top:6px;padding-bottom:6px;cursor:pointer;position:relative;font-variant-numeric:tabular-nums;white-space:nowrap}
-.wr:hover{background:var(--panel)}
 .wr.on{background:rgba(41,98,255,.16)}
 .wr.dragover{box-shadow:inset 0 2px 0 var(--acc)}
 .wr .s{font-weight:600;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center}
 .wr .tag{font-size:10px;color:var(--mute);margin-left:4px;font-weight:400}
 .wr .x{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:none;background:var(--line);border:0;color:var(--text);border-radius:3px;width:20px;height:20px;cursor:pointer;line-height:18px}
-.wr:hover .x{display:block}
+@media (hover: hover) { .wr:hover{background:var(--panel)} .wr:hover .x{display:block} .wr:hover .fl{background:#4a4e59} }
+.wr{touch-action:manipulation;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+@media (max-width: 700px) { #main{position:relative} #watch{position:absolute;top:0;bottom:0;right:0;left:44px;width:auto;z-index:6} }
 .up{color:var(--up)}.dn{color:var(--down)}
 #wToggle{font-size:13px;border:1px solid var(--line);padding:3px 8px}
 #wToggle.on{background:var(--acc);border-color:var(--acc);color:#fff}
@@ -134,7 +134,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px 
     <span class="sep"></span>
     <div class="grp" id="layouts" title="Anzahl Charts"></div>
     <span id="status">Lade…</span>
-    <span id="ver" title="Programmversion">v16</span>
+    <span id="ver" title="Programmversion">v18</span>
     <button id="wToggle" title="Watchlist ein-/ausblenden">Watchlist</button>
   </div>
   <div id="main">
@@ -349,6 +349,7 @@ let loadToken = 0, loadingMore = false, noMore = false;
 let ws = null, wsPing = null;
 let measure = null;
 let touchAim = null;
+let tapInfo = null, lastTap = null;   // touch double-tap = reset view
 let inspect = false, inspectDown = false, lpTimer = null, lpStart = null;   // touch: long-press crosshair   // touch aiming for ruler + drawing tools: {mode, phase:1|2, x, y, aim}
 function fmt(p) { if (!isFinite(p)) return ''; return p.toFixed(dec); }
 // ---------- index / time mapping ----------
@@ -925,6 +926,7 @@ cv.addEventListener('pointerdown', e => {
   if (e.button !== 0 || !bars.length) return;
   const [x, y] = localXY(e);
   try { cv.setPointerCapture(e.pointerId); } catch (_) {}
+  tapInfo = e.pointerType === 'touch' ? { x, y, t: Date.now(), moved: false } : null;
   if (inspect) { inspect = false; mouse.in = false; req(); }
   clearTimeout(lpTimer); lpTimer = null;
   if (e.pointerType === 'touch' && !touchAim && !AIM_TOOLS.includes(tool) && x < plot.w && y < plot.h) {
@@ -976,6 +978,7 @@ cv.addEventListener('pointerdown', e => {
 cv.addEventListener('pointermove', e => {
   if (tpinch) return;
   const [x, y] = localXY(e);
+  if (tapInfo && Math.abs(x - tapInfo.x) + Math.abs(y - tapInfo.y) > 10) tapInfo.moved = true;
   if (lpTimer && lpStart && Math.abs(x - lpStart[0]) + Math.abs(y - lpStart[1]) > 10) { clearTimeout(lpTimer); lpTimer = null; }
   if (inspect && inspectDown) { mouse = { x: clamp(x, 0, plot.w - 1), y: clamp(y, 0, plot.h - 1), in: true }; req(); return; }
   if (touchAim) {
@@ -1019,7 +1022,18 @@ cv.addEventListener('pointermove', e => {
   }
   req();
 });
+function resetView() {
+  priceAuto = true; spacing = W && W < 700 ? 5 : 8; rightIdx = bars.length - 1 + 8; inspect = false; mouse.in = false; req();
+}
 cv.addEventListener('pointerup', e => {
+  if (tapInfo && !tapInfo.moved && !tpinch && Date.now() - tapInfo.t < 300 && !touchAim) {
+    const now = Date.now();
+    if (lastTap && now - lastTap.t < 350 && Math.abs(tapInfo.x - lastTap.x) + Math.abs(tapInfo.y - lastTap.y) < 40) {
+      lastTap = null; tapInfo = null; clearTimeout(lpTimer); lpTimer = null; drag = null; resetView(); return;
+    }
+    lastTap = { x: tapInfo.x, y: tapInfo.y, t: now };
+  }
+  tapInfo = null;
   clearTimeout(lpTimer); lpTimer = null;
   if (inspect && inspectDown) { inspectDown = false; drag = null; req(); return; }
   if (touchAim && touchAim.aim && e.pointerType === 'touch') {
@@ -1189,7 +1203,7 @@ const saveWL = () => lsSet('rc.watch', WL);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function decFor(cat, sym, p) { const l = symCache[cat]; return l && l[sym] ? decimalsOf(l[sym]) : guessDec(p); }
 function renderWL() {
-  $('#wRows').innerHTML = WL.map((i, n) => `<div class="wr" draggable="true" data-n="${n}" data-k="${esc(wKey(i))}"><span class="fl${i.flag ? ' set' : ''}" style="--fc:${esc(i.flag || '')}" title="Markieren (Rechtsklick für Farben)"></span><span class="s">${coinIcon(i.sym)}${esc(i.sym)}${i.cat === 'spot' ? '<span class="tag">Spot</span>' : ''}</span><span class="l">–</span><span class="c"></span><span class="p"></span><button class="x" title="Entfernen">×</button></div>`).join('');
+  $('#wRows').innerHTML = WL.map((i, n) => `<div class="wr" draggable="${!isTouchDevice()}" data-n="${n}" data-k="${esc(wKey(i))}"><span class="fl${i.flag ? ' set' : ''}" style="--fc:${esc(i.flag || '')}" title="Markieren (Rechtsklick für Farben)"></span><span class="s">${coinIcon(i.sym)}${esc(i.sym)}${i.cat === 'spot' ? '<span class="tag">Spot</span>' : ''}</span><span class="l">–</span><span class="c"></span><span class="p"></span><button class="x" title="Entfernen">×</button></div>`).join('');
   updateAllRows(); markActiveWL();
 }
 function markActiveWL() { document.querySelectorAll('.wr').forEach(r => r.classList.toggle('on', r.dataset.k === S.cat + '|' + S.sym)); }
@@ -1244,6 +1258,7 @@ function openTickerWS(cat, syms) {
 function selectWL(i) {
   if (!active) return;
   active.setSym(i.cat, i.sym); fillSymList();
+  if (window.innerWidth <= 700 && S.watch !== false) { S.watch = false; saveSettings(); applyWatchVisible(); }   // phone: show the chart right away
 }
 // --- add dialog (like TradingView) ---
 let dlgCat = 'all', dlgItems = [], dlgHl = 0;
@@ -1303,7 +1318,9 @@ $('#dInp').addEventListener('keydown', e => {
 });
 $('#dList').addEventListener('click', e => { const r = e.target.closest('.dr'); if (!r) return; const it = dlgItems[+r.dataset.n]; if (it) { dlgHl = +r.dataset.n; toggleWL(it.cat, it.sym); } });
 document.querySelectorAll('.dtabs button').forEach(b => b.addEventListener('click', () => { dlgCat = b.dataset.c; document.querySelectorAll('.dtabs button').forEach(x => x.classList.toggle('on', x === b)); dlgHl = 0; renderDlg(); $('#dInp').focus(); }));
+let wlSuppressClick = false, wlLp = null;
 $('#wRows').addEventListener('click', e => {
+  if (wlSuppressClick) { wlSuppressClick = false; return; }
   const r = e.target.closest('.wr'); if (!r) return;
   const i = WL[+r.dataset.n]; if (!i) return;
   if (e.target.closest('.x')) { WL.splice(+r.dataset.n, 1); saveWL(); renderWL(); syncTickerWS(); return; }
@@ -1314,10 +1331,8 @@ $('#wRows').addEventListener('click', e => {
 const FLAGS = ['#f05350', '#4d7cfe', '#8fc282', '#f2c14e', '#ab6ccb', '#6be0f5', '#e891ae'];
 function setFlag(i, col) { if (col) { i.flag = col; S.lastFlag = col; saveSettings(); } else delete i.flag; saveWL(); renderWL(); }
 function closeCtx() { $('#ctx').hidden = true; }
-$('#wRows').addEventListener('contextmenu', e => {
-  const r = e.target.closest('.wr'); if (!r) return;
+function openWlMenu(r, cx, cy) {
   const i = WL[+r.dataset.n]; if (!i) return;
-  e.preventDefault();
   const m = $('#ctx');
   m.innerHTML = `<div class="ci" data-a="toggle">${esc(i.sym)} markieren/Markierung aufheben</div>` +
     `<div class="cd">${FLAGS.map(c => `<button data-c="${c}" class="${i.flag === c ? 'cur' : ''}" style="background:${c}" title="${i.flag === c ? 'Markierung aufheben' : 'Markieren'}"></button>`).join('')}</div>` +
@@ -1325,8 +1340,19 @@ $('#wRows').addEventListener('contextmenu', e => {
     `<div class="ci" data-a="remove">${esc(i.sym)} aus Watchlist entfernen</div>`;
   m.dataset.n = r.dataset.n; m.hidden = false;
   const w = m.offsetWidth, h = m.offsetHeight;
-  m.style.left = Math.min(e.clientX, innerWidth - w - 4) + 'px'; m.style.top = Math.min(e.clientY, innerHeight - h - 4) + 'px';
+  m.style.left = Math.max(4, Math.min(cx, innerWidth - w - 4)) + 'px'; m.style.top = Math.max(4, Math.min(cy, innerHeight - h - 4)) + 'px';
+}
+$('#wRows').addEventListener('contextmenu', e => { const r = e.target.closest('.wr'); if (!r) return; e.preventDefault(); openWlMenu(r, e.clientX, e.clientY); });
+// phone: hold a coin ~0.5 s = menu (flags, remove)
+$('#wRows').addEventListener('pointerdown', e => {
+  if (e.pointerType !== 'touch') return;
+  const r = e.target.closest('.wr'); if (!r) return;
+  const x0 = e.clientX, y0 = e.clientY;
+  clearTimeout(wlLp && wlLp.t);
+  wlLp = { x0, y0, t: setTimeout(() => { wlSuppressClick = true; openWlMenu(r, x0, y0); wlLp = null; }, 500) };
 });
+$('#wRows').addEventListener('pointermove', e => { if (wlLp && Math.abs(e.clientX - wlLp.x0) + Math.abs(e.clientY - wlLp.y0) > 10) { clearTimeout(wlLp.t); wlLp = null; } });
+['pointerup', 'pointercancel'].forEach(t => $('#wRows').addEventListener(t, () => { if (wlLp) { clearTimeout(wlLp.t); wlLp = null; } }));
 $('#ctx').addEventListener('click', e => {
   const i = WL[+$('#ctx').dataset.n]; if (!i) return closeCtx();
   const b = e.target.closest('button[data-c]'), a = e.target.closest('[data-a]');
@@ -1337,7 +1363,7 @@ $('#ctx').addEventListener('click', e => {
   else return;
   closeCtx();
 });
-document.addEventListener('pointerdown', e => { if (!$('#ctx').hidden && !e.target.closest('#ctx')) closeCtx(); });
+document.addEventListener('pointerdown', e => { if (!$('#ctx').hidden && !e.target.closest('#ctx')) { closeCtx(); if (e.target.closest('#wRows')) wlSuppressClick = true; } });
 window.addEventListener('blur', closeCtx);
 $('#wRows').addEventListener('scroll', closeCtx);
 let dragN = -1;
