@@ -138,7 +138,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px 
     <span class="sep"></span>
     <div class="grp" id="layouts" title="Anzahl Charts"></div>
     <span id="status">Lade…</span>
-    <span id="ver" title="Programmversion">v22</span>
+    <span id="ver" title="Programmversion">v23</span>
     <button id="wToggle" title="Watchlist ein-/ausblenden">Watchlist</button>
   </div>
   <div id="main">
@@ -188,8 +188,13 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px 
 const $ = s => document.querySelector(s);
 const API = 'https://api.bybit.com';
 const WS_URL = { linear: 'wss://stream.bybit.com/v5/public/linear', spot: 'wss://stream.bybit.com/v5/public/spot' };
-const TF = [['1','1m',6e4],['3','3m',18e4],['5','5m',3e5],['15','15m',9e5],['30','30m',18e5],['60','1h',36e5],['120','2h',72e5],['240','4h',144e5],['360','6h',216e5],['720','12h',432e5],['D','1D',864e5],['W','1W',6048e5],['M','1M',2592e6]];
-const tfInfo = k => TF.find(x => x[0] === k) || TF[5];
+const TF = [['1','1m',6e4],['5','5m',3e5],['15','15m',9e5],['30','30m',18e5],['60','1h',36e5],['240','4h',144e5],['480','8h',288e5],['720','12h',432e5],['D','1D',864e5],['W','1W',6048e5],['M','1M',2592e6],['6M','6M',15552e6]];
+// timeframes Bybit doesn't offer are built from smaller candles: 8h = 2 x 4h (00/08/16 UTC), 6M = 6 x 1M (Jan/Jul)
+const TF_AGG = {
+  '480': { base: '240', g: t => Math.floor(t / 288e5) * 288e5 },
+  '6M': { base: 'M', g: t => { const d = new Date(t); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() < 6 ? 0 : 6, 1); } }
+};
+const tfInfo = k => TF.find(x => x[0] === k) || TF.find(x => x[0] === '60');
 const PERIOD = {
   D: { iv: 'D', ms: 864e5, tag: 'T', color: '#5d8fd6' },
   W: { iv: 'W', ms: 6048e5, tag: 'W', color: '#f7a600' },
@@ -234,6 +239,23 @@ async function api(path, params) {
   const j = await r.json();
   if (j.retCode !== 0) throw new Error(j.retMsg || 'API-Fehler');
   return j.result;
+}
+function aggregate(rows, g) {
+  const out = [];
+  for (const r of rows) {
+    const t = g(r.t), last = out[out.length - 1];
+    if (last && last.t === t) { last.h = Math.max(last.h, r.h); last.l = Math.min(last.l, r.l); last.c = r.c; last.v += r.v; }
+    else out.push({ t, o: r.o, h: r.h, l: r.l, c: r.c, v: r.v });
+  }
+  return out;
+}
+async function fetchTF(cat, sym, tf, end) {
+  const a = TF_AGG[tf];
+  if (!a) { const rows = await fetchKlines(cat, sym, tf, end, 1000); return { bars: rows, full: rows.length >= 1000, base: null }; }
+  const rows = await fetchKlines(cat, sym, a.base, end, 1000);
+  let bars = aggregate(rows, a.g); const full = rows.length >= 1000;
+  if (full && bars.length > 1) bars = bars.slice(1);   // oldest group may be incomplete
+  return { bars, full, base: rows };
 }
 async function fetchKlines(cat, sym, interval, end, limit = 1000) {
   const p = { category: cat, symbol: sym, interval, limit };
@@ -751,7 +773,7 @@ function draw() {
   for (const d of drawings) if (d.type === 'hline') { const y = Y(d.price); if (y > 0 && y < plot.h) axisTag(fmt(d.price), y, d.color || '#2962ff'); }
   // last price tag + countdown
   if (yLast > 0 && yLast < plot.h) {
-    const end = cfg.tf === 'M' ? nextStart('M', last.t) : last.t + tf;
+    const end = cfg.tf === 'M' ? nextStart('M', last.t) : cfg.tf === '6M' ? (d => Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 6, 1))(new Date(last.t)) : last.t + tf;
     let rem = Math.max(0, end - Date.now()) / 1000;
     const dd = Math.floor(rem / 86400), hh = Math.floor(rem % 86400 / 3600), mm = Math.floor(rem % 3600 / 60), ss = Math.floor(rem % 60);
     const cd = dd ? `${dd}T ${hh}h` : hh ? `${hh}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}` : `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
@@ -799,11 +821,11 @@ async function maybeLoadMore() {
   loadingMore = true;
   const token = loadToken;
   try {
-    const more = await fetchKlines(cfg.cat, cfg.sym, cfg.tf, bars[0].t - 1, 1000);
+    const res = await fetchTF(cfg.cat, cfg.sym, cfg.tf, bars[0].t - 1);
     if (token !== loadToken) return;
-    const add = more.filter(k => k.t < bars[0].t);
+    const add = res.bars.filter(k => k.t < bars[0].t);
     if (!add.length) { noMore = true; return; }
-    if (more.length < 1000) noMore = true;
+    if (!res.full) noMore = true;
     bars = add.concat(bars); rightIdx += add.length;
     req();
   } catch (e) { console.warn(e); noMore = true; }
@@ -817,12 +839,16 @@ async function loadChart() {
   saveLayout(); if (active === me) { syncS(); renderControls(); if (document.querySelector('.wr')) markActiveWL(); }
   try {
     loadSymbols(cfg.cat).catch(e => console.warn(e));
-    const k = await fetchKlines(cfg.cat, cfg.sym, cfg.tf, null, 1000);
+    const res = await fetchTF(cfg.cat, cfg.sym, cfg.tf, null);
     if (token !== loadToken) return;
+    const k = res.bars;
     if (!k.length) throw new Error('Keine Daten für ' + cfg.sym);
-    bars = k; noMore = k.length < 1000;
+    bars = k; noMore = !res.full;
+    aggParts = null;
+    if (res.base) { const a = TF_AGG[cfg.tf], gt = k[k.length - 1].t; aggParts = { gt, m: new Map(res.base.filter(r => a.g(r.t) === gt).map(r => [r.t, r])) }; }
     if (!zoomSet) { spacing = W && W < 700 ? 5 : 8; zoomSet = true; }
     rightIdx = bars.length - 1 + 8; priceAuto = true;
+    { const pw = (W || 800) - AX; if (bars.length * spacing < pw * 0.6) spacing = clamp(pw * 0.85 / (bars.length + 8), spacing, 40); }   // few candles (e.g. 6M): fill the width
     if (symCache[cfg.cat] && symCache[cfg.cat][cfg.sym]) { tick = symCache[cfg.cat][cfg.sym]; dec = decimalsOf(tick); }
     else dec = guessDec(bars[bars.length - 1].c);
     loadDrawings();
@@ -839,7 +865,7 @@ async function loadChart() {
 function closeWS() { const w = ws; ws = null; clearInterval(wsPing); if (w) try { w.close(); } catch (e) {} }
 function connectWS() {
   closeWS();
-  const topic = `kline.${cfg.tf}.${cfg.sym}`, token = loadToken;
+  const topic = `kline.${(TF_AGG[cfg.tf] || {}).base || cfg.tf}.${cfg.sym}`, token = loadToken;
   const w = new WebSocket(WS_URL[cfg.cat]); ws = w;
   w.onopen = () => {
     w.send(JSON.stringify({ op: 'subscribe', args: [topic] }));
@@ -849,7 +875,7 @@ function connectWS() {
   w.onmessage = e => {
     let m; try { m = JSON.parse(e.data); } catch (_) { return; }
     if (m.topic !== topic || !m.data || token !== loadToken) return;
-    for (const k of m.data) upsertBar({ t: +k.start, o: +k.open, h: +k.high, l: +k.low, c: +k.close, v: +k.volume });
+    for (const k of m.data) { const b = { t: +k.start, o: +k.open, h: +k.high, l: +k.low, c: +k.close, v: +k.volume }; if (TF_AGG[cfg.tf]) aggUpdate(b); else upsertBar(b); }
   };
   w.onclose = () => {
     if (ws !== w) return;
@@ -857,7 +883,14 @@ function connectWS() {
     setTimeout(() => { if (ws === w) connectWS(); }, 3000);
   };
 }
-let pivotRefreshAt = 0;
+let pivotRefreshAt = 0, aggParts = null;
+function aggUpdate(k) {
+  const a = TF_AGG[cfg.tf], gt = a.g(k.t);
+  if (!aggParts || aggParts.gt !== gt) { if (aggParts && gt < aggParts.gt) return; aggParts = { gt, m: new Map() }; }
+  aggParts.m.set(k.t, k);
+  const arr = [...aggParts.m.values()].sort((x, y) => x.t - y.t);
+  upsertBar({ t: gt, o: arr[0].o, h: Math.max(...arr.map(x => x.h)), l: Math.min(...arr.map(x => x.l)), c: arr[arr.length - 1].c, v: arr.reduce((s2, x) => s2 + x.v, 0) });
+}
 function upsertBar(k) {
   const n = bars.length; if (!n) return;
   const last = bars[n - 1];
@@ -1091,6 +1124,7 @@ me = {
   onSymbols() { const l = symCache[cfg.cat]; if (l && l[cfg.sym]) { tick = l[cfg.sym]; dec = decimalsOf(tick); req(); } },
   reloadDrawings() { drawings = lsGet(drKey(), []); sel = null; req(); },
   lastPrice: () => bars.length ? bars[bars.length - 1].c : null,
+  lastBars: n => bars.slice(-n),
   view: () => ({ spacing, rightIdx, pMin: +pMin.toFixed(2), pMax: +pMax.toFixed(2), priceAuto }),
   fmt
 };
@@ -1455,7 +1489,7 @@ function addChart(cfg) {
   el.className = 'pane';
   el.innerHTML = '<canvas></canvas><div class="legend"><span class="legIc"></span><span class="legTxt"></span></div>';
   $('#grid').appendChild(el);
-  const ch = createChart(el, { cat: cfg.cat, sym: cfg.sym, tf: cfg.tf });
+  const ch = createChart(el, { cat: cfg.cat, sym: cfg.sym, tf: TF.some(x => x[0] === cfg.tf) ? cfg.tf : '60' });
   charts.push(ch); ch.load();
   return ch;
 }
