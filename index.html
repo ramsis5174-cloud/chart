@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <title>Mein Chart</title>
@@ -10,7 +10,7 @@
 :root{--bg:#131722;--panel:#1e222d;--line:#2a2e39;--text:#d1d4dc;--mute:#787b86;--acc:#2962ff;--up:#26a69a;--down:#ef5350}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;overflow:hidden}
-#app{display:flex;flex-direction:column;height:100%}
+#app{display:flex;flex-direction:column;height:100%;padding:env(safe-area-inset-top,0) env(safe-area-inset-right,0) calc(env(safe-area-inset-bottom,0px) + 4px) env(safe-area-inset-left,0)}
 #top{display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
 #top select,#top input[type=text]{background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:4px 6px;font:inherit}
 #sym{width:150px;text-transform:uppercase;font-weight:600}
@@ -133,7 +133,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px 
     <span class="sep"></span>
     <div class="grp" id="layouts" title="Anzahl Charts"></div>
     <span id="status">Lade…</span>
-    <span id="ver" title="Programmversion">v13</span>
+    <span id="ver" title="Programmversion">v14</span>
     <button id="wToggle" title="Watchlist ein-/ausblenden">Watchlist</button>
   </div>
   <div id="main">
@@ -369,7 +369,7 @@ function timeToIdx(t) {
 const wrap = el, cv = el.querySelector('canvas'), ctx = cv.getContext('2d');
 const legIcEl = el.querySelector('.legIc'), legTxtEl = el.querySelector('.legTxt');
 let W = 0, H = 0, dpr = 1, AX = 70;
-const AY = 26;
+const AY = (window.matchMedia && matchMedia('(hover: none) and (pointer: coarse)').matches) ? 36 : 26;
 const plot = { w: 0, h: 0 };
 const X = i => plot.w - (rightIdx - i) * spacing;
 const idxAtX = x => rightIdx - (plot.w - x) / spacing;
