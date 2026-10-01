@@ -26,6 +26,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px 
 #status{margin-left:auto;font-size:12px;color:var(--mute);white-space:nowrap}
 #status.live::before{content:"● ";color:var(--up)}
 #status.err{color:var(--down)}
+#ver{font-size:10px;color:var(--mute);opacity:.6}
 #main{flex:1;display:flex;min-height:0}
 #tools{width:44px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:6px 0;gap:2px}
 #tools button{width:34px;height:34px;border:0;border-radius:4px;background:transparent;color:var(--text);cursor:pointer;display:flex;align-items:center;justify-content:center;position:relative}
@@ -132,6 +133,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px 
     <span class="sep"></span>
     <div class="grp" id="layouts" title="Anzahl Charts"></div>
     <span id="status">Lade…</span>
+    <span id="ver" title="Programmversion">v12</span>
     <button id="wToggle" title="Watchlist ein-/ausblenden">Watchlist</button>
   </div>
   <div id="main">
@@ -702,7 +704,7 @@ function draw() {
   if (pending) renderDrawing(pendingToDrawing(pending), false);
   if (measure) drawMeasure();
   if (touchRuler) {
-    const hint = touchRuler.phase === 1 ? 'Fadenkreuz ziehen – loslassen setzt den Startpunkt' : 'Fadenkreuz ziehen – loslassen setzt den Endpunkt';
+    const hint = touchRuler.phase === 1 ? 'Wischen = Fadenkreuz bewegen · Tippen = Startpunkt' : 'Wischen = Fadenkreuz bewegen · Tippen = Endpunkt';
     ctx.font = FONT; const hw = ctx.measureText(hint).width + 20;
     ctx.fillStyle = 'rgba(41,98,255,0.9)'; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(plot.w / 2 - hw / 2, 34, hw, 22, 11); else ctx.rect(plot.w / 2 - hw / 2, 34, hw, 22); ctx.fill();
     ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(hint, plot.w / 2, 45);
@@ -903,7 +905,7 @@ cv.addEventListener('pointerdown', e => {
       measure = null; touchRuler = { phase: 1, x: clamp(x, 0, plot.w - 1), y: clamp(y, 0, plot.h - 1), aim: null };
       if (tool === 'measure') setTool('cursor');
     }
-    touchRuler.aim = { fx: x, fy: y, cx: touchRuler.x, cy: touchRuler.y };
+    touchRuler.aim = { fx: x, fy: y, cx: touchRuler.x, cy: touchRuler.y, t0: Date.now(), moved: false };
     mouse = { x: touchRuler.x, y: touchRuler.y, in: true }; drag = null; req(); return;
   }
   if (x > plot.w && y > plot.h) { priceAuto = true; req(); return; }
@@ -943,6 +945,7 @@ cv.addEventListener('pointermove', e => {
   if (touchRuler) {
     if (e.pointerType === 'touch' && touchRuler.aim) {
       const a = touchRuler.aim;
+      if (Math.abs(x - a.fx) + Math.abs(y - a.fy) > 8) a.moved = true;
       touchRuler.x = clamp(a.cx + (x - a.fx), 0, plot.w - 1); touchRuler.y = clamp(a.cy + (y - a.fy), 0, plot.h - 1);
       mouse = { x: touchRuler.x, y: touchRuler.y, in: true };
       if (touchRuler.phase === 2 && measure) measure.p2 = getPt(touchRuler.x, touchRuler.y, true);
@@ -982,8 +985,9 @@ cv.addEventListener('pointermove', e => {
 });
 cv.addEventListener('pointerup', e => {
   if (touchRuler && touchRuler.aim && e.pointerType === 'touch') {
-    touchRuler.aim = null;
-    if (!tpinch) {
+    const a = touchRuler.aim; touchRuler.aim = null;
+    const isTap = !a.moved && Date.now() - a.t0 < 450;
+    if (!tpinch && isTap) {
       const pt = getPt(touchRuler.x, touchRuler.y, true);
       if (touchRuler.phase === 1) { measure = { p1: pt, p2: pt, done: false }; touchRuler.phase = 2; }
       else { measure.p2 = pt; measure.done = true; touchRuler = null; mouse.in = false; }
@@ -1014,6 +1018,7 @@ me = {
   setTf(tf) { if (tf === cfg.tf) return; cfg.tf = tf; loadChart(); },
   destroy() { loadToken++; closeWS(); ro.disconnect(); el.remove(); },
   escape() { pending = null; sel = null; measure = null; touchRuler = null; req(); },
+  startTouchRuler() { if (!bars.length) return; measure = null; touchRuler = { phase: 1, x: Math.round(plot.w / 2), y: Math.round(plot.h / 2), aim: null }; mouse = { x: touchRuler.x, y: touchRuler.y, in: true }; req(); },
   clearPending(t) { pending = null; if (t !== 'cursor') sel = null; req(); },
   deleteSel() { if (!sel) return false; drawings = drawings.filter(d => d !== sel); sel = null; saveDrawings(); req(); return true; },
   deleteAll() { drawings = []; sel = null; saveDrawings(); req(); },
@@ -1108,7 +1113,11 @@ $('#pvLevels').addEventListener('change', e => { S.pv.levels = +e.target.value; 
 $('#pvHist').addEventListener('change', e => { S.pv.hist = e.target.value; saveSettings(); reqAll(); });
 $('#pvPrices').addEventListener('change', e => { S.pv.prices = e.target.checked; saveSettings(); reqAll(); });
 document.querySelectorAll('[data-pp]').forEach(c => c.addEventListener('change', () => { S.pv[c.dataset.pp] = c.checked; saveSettings(); charts.forEach(ch => { ch.loadPivots(); ch.req(); }); }));
-document.querySelectorAll('#tools button[data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
+const isTouchDevice = () => window.matchMedia && matchMedia('(hover: none) and (pointer: coarse)').matches;
+document.querySelectorAll('#tools button[data-tool]').forEach(b => b.addEventListener('click', () => {
+  if (b.dataset.tool === 'measure' && isTouchDevice() && active) { setTool('cursor'); active.startTouchRuler(); return; }
+  setTool(b.dataset.tool);
+}));
 $('#magnet').addEventListener('click', () => { S.magnet = !S.magnet; saveSettings(); renderControls(); });
 $('#color').addEventListener('input', e => { S.color = e.target.value; saveSettings(); if (active) active.setSelColor(S.color); });
 $('#delSel').addEventListener('click', () => { if (active) active.deleteSel(); });
