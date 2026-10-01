@@ -343,6 +343,7 @@ let tick = '0.01', dec = 2;
 let loadToken = 0, loadingMore = false, noMore = false;
 let ws = null, wsPing = null;
 let measure = null;
+let touchRuler = null;   // touch ruler: {phase:1|2, x, y, aim:{fx,fy,cx,cy}|null}
 function fmt(p) { if (!isFinite(p)) return ''; return p.toFixed(dec); }
 // ---------- index / time mapping ----------
 function idxToTime(i) {
@@ -700,6 +701,13 @@ function draw() {
   for (const d of drawings) renderDrawing(d, d === sel);
   if (pending) renderDrawing(pendingToDrawing(pending), false);
   if (measure) drawMeasure();
+  if (touchRuler) {
+    const hint = touchRuler.phase === 1 ? 'Fadenkreuz ziehen – loslassen setzt den Startpunkt' : 'Fadenkreuz ziehen – loslassen setzt den Endpunkt';
+    ctx.font = FONT; const hw = ctx.measureText(hint).width + 20;
+    ctx.fillStyle = 'rgba(41,98,255,0.9)'; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(plot.w / 2 - hw / 2, 34, hw, 22, 11); else ctx.rect(plot.w / 2 - hw / 2, 34, hw, 22); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(hint, plot.w / 2, 45);
+    ctx.beginPath(); ctx.arc(touchRuler.x, touchRuler.y, 6, 0, Math.PI * 2); ctx.strokeStyle = '#2962ff'; ctx.lineWidth = 2; ctx.stroke();
+  }
   // crosshair
   if (mouse.in && mouse.x < plot.w && mouse.y < plot.h && !drag) {
     ctx.setLineDash([4, 4]); ctx.strokeStyle = C.cross; ctx.lineWidth = 1;
@@ -889,6 +897,15 @@ cv.addEventListener('pointerdown', e => {
   if (e.button !== 0 || !bars.length) return;
   const [x, y] = localXY(e);
   try { cv.setPointerCapture(e.pointerId); } catch (_) {}
+  // touch ruler: drag the crosshair into place, lift finger = set point
+  if (e.pointerType === 'touch' && (touchRuler || tool === 'measure')) {
+    if (!touchRuler) {
+      measure = null; touchRuler = { phase: 1, x: clamp(x, 0, plot.w - 1), y: clamp(y, 0, plot.h - 1), aim: null };
+      if (tool === 'measure') setTool('cursor');
+    }
+    touchRuler.aim = { fx: x, fy: y, cx: touchRuler.x, cy: touchRuler.y };
+    mouse = { x: touchRuler.x, y: touchRuler.y, in: true }; drag = null; req(); return;
+  }
   if (x > plot.w && y > plot.h) { priceAuto = true; req(); return; }
   if (x > plot.w) { priceAuto = false; drag = { kind: 'yscale', y0: y, pMin0: pMin, pMax0: pMax }; return; }
   if (y > plot.h) { drag = { kind: 'xscale', x0: x, s0: spacing }; return; }
@@ -923,6 +940,16 @@ cv.addEventListener('pointerdown', e => {
 cv.addEventListener('pointermove', e => {
   if (tpinch) return;
   const [x, y] = localXY(e);
+  if (touchRuler) {
+    if (e.pointerType === 'touch' && touchRuler.aim) {
+      const a = touchRuler.aim;
+      touchRuler.x = clamp(a.cx + (x - a.fx), 0, plot.w - 1); touchRuler.y = clamp(a.cy + (y - a.fy), 0, plot.h - 1);
+      mouse = { x: touchRuler.x, y: touchRuler.y, in: true };
+      if (touchRuler.phase === 2 && measure) measure.p2 = getPt(touchRuler.x, touchRuler.y, true);
+      req();
+    }
+    return;
+  }
   mouse = { x, y, in: true };
   if (pending) { pending.p2 = getPt(x, y, true); }
   if (measure && !measure.done) { measure.p2 = getPt(x, y, true); }
@@ -954,11 +981,20 @@ cv.addEventListener('pointermove', e => {
   req();
 });
 cv.addEventListener('pointerup', e => {
+  if (touchRuler && touchRuler.aim && e.pointerType === 'touch') {
+    touchRuler.aim = null;
+    if (!tpinch) {
+      const pt = getPt(touchRuler.x, touchRuler.y, true);
+      if (touchRuler.phase === 1) { measure = { p1: pt, p2: pt, done: false }; touchRuler.phase = 2; }
+      else { measure.p2 = pt; measure.done = true; touchRuler = null; mouse.in = false; }
+    }
+    req(); return;
+  }
   if (drag && (drag.kind === 'handle' || drag.kind === 'move')) saveDrawings();
   drag = null; req();
 });
 cv.addEventListener('pointercancel', e => { drag = null; req(); });
-cv.addEventListener('pointerleave', () => { mouse.in = false; req(); });
+cv.addEventListener('pointerleave', () => { if (!touchRuler) mouse.in = false; req(); });
 cv.addEventListener('dblclick', e => { const [x] = localXY(e); if (x > plot.w) { priceAuto = true; req(); } });
 cv.addEventListener('wheel', e => {
   e.preventDefault(); if (!bars.length) return;
@@ -977,7 +1013,7 @@ me = {
   setSym(cat, sym) { if (cat === cfg.cat && sym === cfg.sym) return; cfg.cat = cat; cfg.sym = sym; loadChart(); },
   setTf(tf) { if (tf === cfg.tf) return; cfg.tf = tf; loadChart(); },
   destroy() { loadToken++; closeWS(); ro.disconnect(); el.remove(); },
-  escape() { pending = null; sel = null; measure = null; req(); },
+  escape() { pending = null; sel = null; measure = null; touchRuler = null; req(); },
   clearPending(t) { pending = null; if (t !== 'cursor') sel = null; req(); },
   deleteSel() { if (!sel) return false; drawings = drawings.filter(d => d !== sel); sel = null; saveDrawings(); req(); return true; },
   deleteAll() { drawings = []; sel = null; saveDrawings(); req(); },
