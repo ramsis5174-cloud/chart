@@ -134,7 +134,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px 
     <span class="sep"></span>
     <div class="grp" id="layouts" title="Anzahl Charts"></div>
     <span id="status">Lade…</span>
-    <span id="ver" title="Programmversion">v18</span>
+    <span id="ver" title="Programmversion">v19</span>
     <button id="wToggle" title="Watchlist ein-/ausblenden">Watchlist</button>
   </div>
   <div id="main">
@@ -1000,7 +1000,7 @@ cv.addEventListener('pointermove', e => {
       rightIdx = drag.right0 - (x - drag.x0) / spacing;
       if (!priceAuto && !drag.noY) { const dp = (y - drag.y0) / plot.h * (drag.pMax0 - drag.pMin0); pMax = drag.pMax0 + dp; pMin = drag.pMin0 + dp; }
     } else if (drag.kind === 'xscale') {
-      spacing = clamp(drag.s0 * Math.exp((x - drag.x0) * 0.008), 1, 60);
+      spacing = clamp(drag.s0 * Math.exp(-(x - drag.x0) * 0.008), 1, 60);   // left = wider candles, right = narrower
     } else if (drag.kind === 'yscale') {
       const f = Math.exp((y - drag.y0) * 0.006), c = (drag.pMax0 + drag.pMin0) / 2, h = (drag.pMax0 - drag.pMin0) / 2 * f;
       pMax = c + h; pMin = c - h;
