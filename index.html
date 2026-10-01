@@ -134,7 +134,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px 
     <span class="sep"></span>
     <div class="grp" id="layouts" title="Anzahl Charts"></div>
     <span id="status">Lade…</span>
-    <span id="ver" title="Programmversion">v19</span>
+    <span id="ver" title="Programmversion">v20</span>
     <button id="wToggle" title="Watchlist ein-/ausblenden">Watchlist</button>
   </div>
   <div id="main">
@@ -193,7 +193,11 @@ const PERIOD = {
 const C = { bg: '#131722', grid: '#1c2030', text: '#b2b5be', mute: '#787b86', axisLine: '#2a2e39', up: '#26a69a', down: '#ef5350', cross: '#9598a1' };
 const MON = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
 const WD = ['So','Mo','Di','Mi','Do','Fr','Sa'];
-const FIB = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618, 2.618];
+// Fibonacci levels like TradingView: 0 = second point, 100% = first point; each level with its own colour
+const FIB_LV = [
+  [1.618, '#f23f6a'], [1, '#e6e6e6'], [0.786, '#f05a4f'], [0.618, '#70b56f'], [0.5, '#f5df4d'], [0.382, '#4a8ff2'], [0.236, '#e98ea4'],
+  [0, '#e6e6e6'], [-0.13, '#f2b8c6'], [-0.27, '#f59a28'], [-0.618, '#f59a28'], [-1.618, '#66b06a'], [-2.618, '#3fa58c']];
+const FIB = FIB_LV.map(f => f[0]);
 const FONT = '11px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif';
 
 // ---------- storage ----------
@@ -545,21 +549,14 @@ function renderDrawing(d, selected) {
     }
     case 'fib': {
       const xa = Math.min(sx(d.t1), sx(d.t2)), xb = Math.max(sx(d.t1), sx(d.t2));
-      const lv = FIB.map(l => ({ l, p: d.p2 + (d.p1 - d.p2) * l }));
-      for (let i = 0; i < lv.length - 1; i++) {
-        const ya = Y(lv[i].p), yb = Y(lv[i + 1].p);
-        ctx.fillStyle = rgba(col, i % 2 ? 0.05 : 0.09); ctx.fillRect(xa, Math.min(ya, yb), xb - xa, Math.abs(yb - ya));
+      ctx.lineWidth = 1; ctx.font = '12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+      for (const [l, c] of FIB_LV) {
+        const p = d.p2 + (d.p1 - d.p2) * l, y = Math.round(Y(p)) + 0.5;
+        if (y < -20 || y > plot.h + 20) continue;
+        ctx.strokeStyle = c; ctx.beginPath(); ctx.moveTo(xa, y); ctx.lineTo(xb, y); ctx.stroke();
+        ctx.fillStyle = c; ctx.fillText(`${(l * 100).toFixed(2)}% (${fmt(p)})`, xb + 8, y - 4);
       }
-      ctx.lineWidth = 1;
-      for (const { l, p } of lv) {
-        const y = Math.round(Y(p)) + 0.5;
-        ctx.strokeStyle = (l === 0.5 || l === 0.618) ? col : rgba(col, 0.75);
-        ctx.beginPath(); ctx.moveTo(xa, y); ctx.lineTo(xb, y); ctx.stroke();
-        ctx.fillStyle = col; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-        ctx.fillText(`${l} (${fmt(p)})`, xa - 4, y);
-      }
-      ctx.setLineDash([4, 4]); ctx.strokeStyle = rgba(col, 0.6);
-      ctx.beginPath(); ctx.moveTo(sx(d.t1), Y(d.p1)); ctx.lineTo(sx(d.t2), Y(d.p2)); ctx.stroke(); ctx.setLineDash([]);
       break;
     }
     case 'long': case 'short': {
