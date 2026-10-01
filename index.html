@@ -134,7 +134,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px 
     <span class="sep"></span>
     <div class="grp" id="layouts" title="Anzahl Charts"></div>
     <span id="status">Lade…</span>
-    <span id="ver" title="Programmversion">v15</span>
+    <span id="ver" title="Programmversion">v16</span>
     <button id="wToggle" title="Watchlist ein-/ausblenden">Watchlist</button>
   </div>
   <div id="main">
@@ -888,13 +888,14 @@ function localXY(e) { const r = cv.getBoundingClientRect(); return [e.clientX - 
 let tpinch = null;
 function touchInfo(e) {
   const r = cv.getBoundingClientRect(), a = e.touches[0], b = e.touches[1];
-  return { d: Math.max(20, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)), mid: clamp((a.clientX + b.clientX) / 2 - r.left, 0, plot.w) };
+  return { dx: Math.abs(a.clientX - b.clientX), dy: Math.abs(a.clientY - b.clientY),
+    mx: clamp((a.clientX + b.clientX) / 2 - r.left, 0, plot.w), my: clamp((a.clientY + b.clientY) / 2 - r.top, 0, plot.h) };
 }
 cv.addEventListener('touchstart', e => {
   if (e.touches.length >= 2 && bars.length) {
     e.preventDefault();
     const t = touchInfo(e);
-    tpinch = { d0: t.d, s0: spacing, idx0: idxAtX(t.mid) };
+    tpinch = { dx0: t.dx, dy0: t.dy, s0: spacing, idx0: idxAtX(t.mx), pMin0: pMin, pMax0: pMax, pm0: priceAtY(t.my), vert: false };
     clearTimeout(lpTimer); lpTimer = null; inspect = false; inspectDown = false;
     drag = null; pending = null; if (measure && !measure.done) measure = null; mouse.in = false; req();
   }
@@ -902,9 +903,17 @@ cv.addEventListener('touchstart', e => {
 cv.addEventListener('touchmove', e => {
   e.preventDefault();
   if (tpinch && e.touches.length >= 2) {
-    const t = touchInfo(e);
-    spacing = clamp(tpinch.s0 * t.d / tpinch.d0, 1, 60);
-    rightIdx = tpinch.idx0 + (plot.w - t.mid) / spacing;
+    const t = touchInfo(e), F = 60;
+    // horizontal: finger distance left/right = time zoom
+    spacing = clamp(tpinch.s0 * Math.max(t.dx, F) / Math.max(tpinch.dx0, F), 1, 60);
+    rightIdx = tpinch.idx0 + (plot.w - t.mx) / spacing;
+    // vertical: finger distance up/down = price zoom (switches off AUTO)
+    if (!tpinch.vert && Math.abs(t.dy - tpinch.dy0) > 25) tpinch.vert = true;
+    if (tpinch.vert) {
+      const sy = Math.max(t.dy, F) / Math.max(tpinch.dy0, F), range = (tpinch.pMax0 - tpinch.pMin0) / sy;
+      priceAuto = false;
+      pMax = tpinch.pm0 + t.my / plot.h * range; pMin = pMax - range;
+    }
     req();
   }
 }, { passive: false });
@@ -1065,7 +1074,7 @@ me = {
   onSymbols() { const l = symCache[cfg.cat]; if (l && l[cfg.sym]) { tick = l[cfg.sym]; dec = decimalsOf(tick); req(); } },
   reloadDrawings() { drawings = lsGet(drKey(), []); sel = null; req(); },
   lastPrice: () => bars.length ? bars[bars.length - 1].c : null,
-  view: () => ({ spacing, rightIdx }),
+  view: () => ({ spacing, rightIdx, pMin: +pMin.toFixed(2), pMax: +pMax.toFixed(2), priceAuto }),
   fmt
 };
 return me;
