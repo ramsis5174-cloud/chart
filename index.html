@@ -139,7 +139,7 @@ input,textarea{-webkit-user-select:text;user-select:text}
     <span class="sep"></span>
     <div class="grp" id="layouts" title="Anzahl Charts"></div>
     <span id="status">Lade…</span>
-    <span id="ver" title="Programmversion">v24</span>
+    <span id="ver" title="Programmversion">v25</span>
     <button id="wToggle" title="Watchlist ein-/ausblenden">Watchlist</button>
   </div>
   <div id="main">
@@ -382,7 +382,7 @@ let loadToken = 0, loadingMore = false, noMore = false;
 let ws = null, wsPing = null;
 let measure = null;
 let touchAim = null;
-let tapInfo = null, lastTap = null;   // touch double-tap = reset view
+let tapInfo = null, lastTap = null, tapSelect = null;   // touch double-tap = reset view
 let inspect = false, inspectDown = false, lpTimer = null, lpStart = null;   // touch: long-press crosshair   // touch aiming for ruler + drawing tools: {mode, phase:1|2, x, y, aim}
 function fmt(p) { if (!isFinite(p)) return ''; return p.toFixed(dec); }
 // ---------- index / time mapping ----------
@@ -526,17 +526,16 @@ function handlesOf(d) {
   }
   return [];
 }
-function hitBody(d, x, y) {
+function hitBody(d, x, y, T = 6) {
   switch (d.type) {
-    case 'hline': return Math.abs(y - Y(d.price)) < 6;
-    case 'trend': return distSeg(x, y, sx(d.t1), Y(d.p1), sx(d.t2), Y(d.p2)) < 6;
-    case 'ray': { const x1 = sx(d.t1), y1 = Y(d.p1), [x3, y3] = rayEnd(x1, y1, sx(d.t2), Y(d.p2)); return distSeg(x, y, x1, y1, x3, y3) < 6; }
-    case 'rect': { const a = Math.min(sx(d.t1), sx(d.t2)), b = Math.max(sx(d.t1), sx(d.t2)), c = Math.min(Y(d.p1), Y(d.p2)), e = Math.max(Y(d.p1), Y(d.p2)); return x >= a - 5 && x <= b + 5 && y >= c - 5 && y <= e + 5; }
-    case 'fib': {
+    case 'hline': return Math.abs(y - Y(d.price)) < T;
+    case 'trend': return distSeg(x, y, sx(d.t1), Y(d.p1), sx(d.t2), Y(d.p2)) < T;
+    case 'ray': { const x1 = sx(d.t1), y1 = Y(d.p1), [x3, y3] = rayEnd(x1, y1, sx(d.t2), Y(d.p2)); return distSeg(x, y, x1, y1, x3, y3) < T; }
+    case 'rect': { const a = Math.min(sx(d.t1), sx(d.t2)), b = Math.max(sx(d.t1), sx(d.t2)), c = Math.min(Y(d.p1), Y(d.p2)), e = Math.max(Y(d.p1), Y(d.p2)); return x >= a - T && x <= b + T && y >= c - T && y <= e + T; }
+    case 'fib': {   // only the lines themselves, not the space between them
       const a = Math.min(sx(d.t1), sx(d.t2)), b = Math.max(sx(d.t1), sx(d.t2));
-      if (x < a - 5 || x > b + 5) return false;
-      const ys = FIB.map(l => Y(d.p2 + (d.p1 - d.p2) * l));
-      return y >= Math.min(...ys) - 5 && y <= Math.max(...ys) + 5;
+      if (x < a - T || x > b + T) return false;
+      return FIB.some(l => Math.abs(y - Y(d.p2 + (d.p1 - d.p2) * l)) < T);
     }
     case 'long': case 'short': {
       const a = sx(d.t1), b = sx(d.t2), ys = [Y(d.tp), Y(d.sl)];
@@ -545,9 +544,11 @@ function hitBody(d, x, y) {
   }
   return false;
 }
-function hitTest(x, y) {
-  if (sel) { const hs = handlesOf(sel); for (let i = 0; i < hs.length; i++) if (Math.hypot(hs[i].x - x, hs[i].y - y) < 8) return { d: sel, h: i }; }
-  for (let i = drawings.length - 1; i >= 0; i--) if (hitBody(drawings[i], x, y)) return { d: drawings[i], h: -1 };
+function hitTest(x, y, touch) {
+  const T = touch ? 12 : 6, HR = touch ? 20 : 8;
+  if (sel) { const hs = handlesOf(sel); for (let i = 0; i < hs.length; i++) if (Math.hypot(hs[i].x - x, hs[i].y - y) < HR) return { d: sel, h: i }; }
+  if (sel && hitBody(sel, x, y, T)) return { d: sel, h: -1 };
+  for (let i = drawings.length - 1; i >= 0; i--) if (hitBody(drawings[i], x, y, T)) return { d: drawings[i], h: -1 };
   return null;
 }
 function labelBox(txt, x, y, bg, fg, align) {
@@ -1002,7 +1003,14 @@ cv.addEventListener('pointerdown', e => {
     const d = pendingToDrawing(pending); drawings.push(d); saveDrawings();
     setTool('cursor'); sel = d; req(); return;
   }
-  const hit = hitTest(x, y);
+  const isTouch = e.pointerType === 'touch';
+  const hit = hitTest(x, y, isTouch);
+  // phone: a drawing only moves after it was selected with a tap; otherwise swiping over it moves the chart
+  if (hit && isTouch && hit.d !== sel) {
+    tapSelect = hit.d;
+    drag = { kind: 'pan', x0: x, y0: y, right0: rightIdx, pMin0: pMin, pMax0: pMax };
+    req(); return;
+  }
   if (hit) {
     sel = hit.d;
     if (hit.h >= 0) drag = { kind: 'handle', d: hit.d, h: hit.h };
@@ -1071,6 +1079,8 @@ cv.addEventListener('pointerup', e => {
     }
     lastTap = { x: tapInfo.x, y: tapInfo.y, t: now };
   }
+  if (tapSelect && tapInfo && !tapInfo.moved) { sel = tapSelect; req(); }
+  tapSelect = null;
   tapInfo = null;
   clearTimeout(lpTimer); lpTimer = null;
   if (inspect && inspectDown) { inspectDown = false; drag = null; req(); return; }
@@ -1127,6 +1137,7 @@ me = {
   reloadDrawings() { drawings = lsGet(drKey(), []); sel = null; req(); },
   lastPrice: () => bars.length ? bars[bars.length - 1].c : null,
   lastBars: n => bars.slice(-n),
+  priceY: p => Y(p), selType: () => sel && sel.type,
   view: () => ({ spacing, rightIdx, pMin: +pMin.toFixed(2), pMax: +pMax.toFixed(2), priceAuto }),
   fmt
 };
