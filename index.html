@@ -141,7 +141,7 @@ input,textarea{-webkit-user-select:text;user-select:text}
     <span class="sep"></span>
     <div class="grp" id="layouts" title="Anzahl Charts"></div>
     <span id="status">Lade…</span>
-    <span id="ver" title="Programmversion">v26</span>
+    <span id="ver" title="Programmversion">v27</span>
     <button id="wToggle" title="Watchlist ein-/ausblenden">Watchlist</button>
   </div>
   <div id="main">
@@ -1539,6 +1539,20 @@ document.addEventListener('pointerdown', e => { if (!$('#wmenu').hidden && !e.ta
 document.addEventListener('selectstart', e => { if (!e.target.closest || !e.target.closest('input,textarea')) e.preventDefault(); });
 // stop Safari's own page zoom on pinch
 ['gesturestart', 'gesturechange'].forEach(t => document.addEventListener(t, e => e.preventDefault(), { passive: false }));
+
+// ---------- auto-update: if a newer version is online, load it (only when served from a website) ----------
+async function checkUpdate() {
+  if (!/^https?:$/.test(location.protocol)) return;
+  try {
+    const r = await fetch(location.pathname + '?nc=' + Date.now(), { cache: 'no-store' });
+    const m = (await r.text()).match(/id="ver"[^>]*>(v\d+)</);
+    const cur = $('#ver').textContent.trim();
+    if (m && m[1] !== cur && +m[1].slice(1) > +cur.slice(1)) location.replace(location.pathname + '?v=' + m[1].slice(1));
+  } catch (e) { console.warn('Update-Check', e); }
+}
+setTimeout(checkUpdate, 3000);
+setInterval(checkUpdate, 10 * 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
 
 // ---------- multi-chart layout ----------
 const LAYOUTS = { 1: [1, 1], 2: [2, 1], 3: [3, 1], 4: [2, 2], 6: [3, 2], 8: [4, 2] };
