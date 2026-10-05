@@ -137,9 +137,11 @@ input,textarea{-webkit-user-select:text;user-select:text}
     <select id="pvHist" title="Vergangene Perioden anzeigen?"><option value="all">mit Verlauf</option><option value="cur">nur aktuell</option></select>
     <label class="chk" title="Preise an den Pivot-Linien anzeigen"><input type="checkbox" id="pvPrices">Preise</label>
     <span class="sep"></span>
+    <label class="chk" title="Volumenprofil: wie viel an welchem Preis gehandelt wurde (sichtbarer Bereich)"><input type="checkbox" id="vpOn">Volumenprofil</label>
+    <span class="sep"></span>
     <div class="grp" id="layouts" title="Anzahl Charts"></div>
     <span id="status">Lade…</span>
-    <span id="ver" title="Programmversion">v25</span>
+    <span id="ver" title="Programmversion">v26</span>
     <button id="wToggle" title="Watchlist ein-/ausblenden">Watchlist</button>
   </div>
   <div id="main">
@@ -215,7 +217,7 @@ const FONT = '11px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,
 // ---------- storage ----------
 function lsGet(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
 function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
-const DEF = { cat: 'linear', sym: 'BTCUSDT', tf: '60', magnet: false, color: '#2962ff', pv: { type: 'traditional', D: false, W: true, M: true, Y: false, levels: 3, prices: true, hist: 'all' } };
+const DEF = { cat: 'linear', sym: 'BTCUSDT', tf: '60', magnet: false, color: '#2962ff', pv: { type: 'traditional', D: false, W: true, M: true, Y: false, levels: 3, prices: true, hist: 'all' }, vp: false };
 const S = Object.assign({}, DEF, lsGet('rc.settings', {}));
 S.pv = Object.assign({}, DEF.pv, S.pv || {});
 const saveSettings = () => lsSet('rc.settings', S);
@@ -660,6 +662,50 @@ function drawMeasure() {
   ctx.fillText(l1, bx + w / 2, by + 13); ctx.fillText(l2, bx + w / 2, by + 30);
 }
 
+// ---------- volume profile (visible range): traded volume per price level ----------
+function drawVolumeProfile(a, b) {
+  if (b - a < 2) return;
+  let lo = Infinity, hi = -Infinity;
+  for (let i = a; i <= b; i++) { if (bars[i].l < lo) lo = bars[i].l; if (bars[i].h > hi) hi = bars[i].h; }
+  if (!(hi > lo)) return;
+  const N = clamp(Math.round(plot.h / 9), 24, 80), step = (hi - lo) / N;
+  const up = new Float64Array(N), dn = new Float64Array(N);
+  for (let i = a; i <= b; i++) {
+    const k = bars[i], span = Math.max(k.h - k.l, step * 1e-6), isUp = k.c >= k.o;
+    const r0 = clamp(Math.floor((k.l - lo) / step), 0, N - 1), r1 = clamp(Math.floor((k.h - lo) / step), 0, N - 1);
+    for (let r = r0; r <= r1; r++) {
+      const pLo = lo + r * step, pHi = pLo + step;
+      const part = r0 === r1 ? 1 : (Math.min(pHi, k.h) - Math.max(pLo, k.l)) / span;
+      if (part > 0) { if (isUp) up[r] += k.v * part; else dn[r] += k.v * part; }
+    }
+  }
+  const tot = Array.from(up, (u, r) => u + dn[r]);
+  let poc = 0; for (let r = 1; r < N; r++) if (tot[r] > tot[poc]) poc = r;
+  const max = tot[poc]; if (!max) return;
+  // value area: 70% of volume around the POC
+  const all = tot.reduce((x, y) => x + y, 0); let va = tot[poc], vaLo = poc, vaHi = poc;
+  while (va < all * 0.7 && (vaLo > 0 || vaHi < N - 1)) {
+    const below = vaLo > 0 ? tot[vaLo - 1] : -1, above = vaHi < N - 1 ? tot[vaHi + 1] : -1;
+    if (above >= below) va += tot[++vaHi]; else va += tot[--vaLo];
+  }
+  const maxW = plot.w * 0.28;
+  for (let r = 0; r < N; r++) {
+    if (!tot[r]) continue;
+    const yTop = Y(lo + (r + 1) * step), yBot = Y(lo + r * step), h = Math.max(1, yBot - yTop - 1);
+    const inVA = r >= vaLo && r <= vaHi, wU = up[r] / max * maxW, wD = dn[r] / max * maxW;
+    ctx.fillStyle = inVA ? 'rgba(38,166,154,0.45)' : 'rgba(38,166,154,0.2)';
+    ctx.fillRect(plot.w - wU - wD, yTop + 0.5, wU, h);
+    ctx.fillStyle = inVA ? 'rgba(239,83,80,0.45)' : 'rgba(239,83,80,0.2)';
+    ctx.fillRect(plot.w - wD, yTop + 0.5, wD, h);
+  }
+  // point of control = price with the most volume
+  const yP = Math.round(Y(lo + (poc + 0.5) * step)) + 0.5;
+  ctx.strokeStyle = 'rgba(255,214,0,0.9)'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]);
+  ctx.beginPath(); ctx.moveTo(0, yP); ctx.lineTo(plot.w, yP); ctx.stroke(); ctx.setLineDash([]);
+  ctx.font = FONT; ctx.fillStyle = 'rgba(255,214,0,0.95)'; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
+  ctx.fillText('POC ' + fmt(lo + (poc + 0.5) * step), plot.w - 4, yP - 2);
+}
+
 // ---------- main draw ----------
 function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -725,6 +771,7 @@ function draw() {
       ctx.fillRect(Math.round(x - bw / 2), top, bw, hh);
     }
   }
+  if (S.vp) drawVolumeProfile(a, b);
   drawPivots();
   // last price line
   const last = bars[bars.length - 1], lastCol = last.c >= last.o ? C.up : C.down;
@@ -1198,7 +1245,7 @@ function renderControls() {
   $('#cat').value = S.cat;
   if (document.activeElement !== $('#sym')) $('#sym').value = S.sym;
   $('#tfs').innerHTML = TF.map(([k, l]) => `<button data-tf="${k}" class="${k === S.tf ? 'on' : ''}">${l}</button>`).join('');
-  $('#pvType').value = S.pv.type; $('#pvLevels').value = String(S.pv.levels); $('#pvPrices').checked = !!S.pv.prices; $('#pvHist').value = S.pv.hist;
+  $('#pvType').value = S.pv.type; $('#pvLevels').value = String(S.pv.levels); $('#pvPrices').checked = !!S.pv.prices; $('#vpOn').checked = !!S.vp; $('#pvHist').value = S.pv.hist;
   document.querySelectorAll('[data-pp]').forEach(c => c.checked = !!S.pv[c.dataset.pp]);
   $('#magnet').classList.toggle('on', !!S.magnet);
   $('#color').value = S.color;
@@ -1224,6 +1271,7 @@ $('#pvType').addEventListener('change', e => { S.pv.type = e.target.value; saveS
 $('#pvLevels').addEventListener('change', e => { S.pv.levels = +e.target.value; saveSettings(); reqAll(); });
 $('#pvHist').addEventListener('change', e => { S.pv.hist = e.target.value; saveSettings(); reqAll(); });
 $('#pvPrices').addEventListener('change', e => { S.pv.prices = e.target.checked; saveSettings(); reqAll(); });
+$('#vpOn').addEventListener('change', e => { S.vp = e.target.checked; saveSettings(); reqAll(); });
 document.querySelectorAll('[data-pp]').forEach(c => c.addEventListener('change', () => { S.pv[c.dataset.pp] = c.checked; saveSettings(); charts.forEach(ch => { ch.loadPivots(); ch.req(); }); }));
 function markAimTool(mode) { document.querySelectorAll('#tools button[data-tool]').forEach(b => b.classList.toggle('on', mode ? b.dataset.tool === mode : b.dataset.tool === tool)); }
 const isTouchDevice = () => window.matchMedia && matchMedia('(hover: none) and (pointer: coarse)').matches;
